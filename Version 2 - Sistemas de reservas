@@ -1,0 +1,96 @@
+Version 2 - Sistemas de reservas
+
+//El scrib ahora agrega los eventos al calendar cada vez que una reserva es aprobada, se valida se ya esta en el calendar para evitar duplicados.
+
+function validarReservas() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+  var disponibilidad = [];
+  var calendarId = "c_11cb5f463bd775f58e9ecae1e3f99e4c56e8a8d0f9d5206ae995735ebac454c2@group.calendar.google.com";
+  var calendar = CalendarApp.getCalendarById(calendarId);
+  var calendarLink = "https://calendar.google.com/calendar/embed?src=" + encodeURIComponent(calendarId);
+
+  Logger.log("Inicio de la función validarReservas");
+
+  for (var i = 1; i < data.length; i++) {
+    var fila = data[i];
+    var fechaReserva = fila[3];
+    var horaInicio = fila[4];
+    var horaFin = fila[5];
+    var salaReuniones = fila[6];
+    var responsable = fila[1];
+    var direccionCorreo = fila[9];
+    var notificado = fila[10];
+    var enCalendario = fila[12]; // Columna M "En Calendario"
+
+    Logger.log("Procesando fecha en la fila " + (i + 1) + ": " + fechaReserva);
+    var fechaReservaFormateada = Utilities.formatDate(fechaReserva, Session.getScriptTimeZone(), "dd/MM/yyyy");
+    Logger.log("Fecha procesada correctamente en la fila " + (i + 1) + ": " + fechaReservaFormateada);
+
+    var horarioLaboral = [{ inicio: "07:00", fin: "17:00" }];
+    var disponible = true;
+
+    for (var j = 0; j < disponibilidad.length; j++) {
+      if (
+        disponibilidad[j].fecha === fechaReservaFormateada &&
+        disponibilidad[j].sala === salaReuniones &&
+        (
+          (horaInicio >= disponibilidad[j].horaInicio && horaInicio < disponibilidad[j].horaFin) ||
+          (horaFin > disponibilidad[j].horaInicio && horaFin <= disponibilidad[j].horaFin)
+        )
+      ) {
+        disponible = false;
+        break;
+      }
+    }
+
+    if (disponible) {
+      disponibilidad.push({ fecha: fechaReservaFormateada, sala: salaReuniones, horaInicio, horaFin });
+      Logger.log("Reserva aprobada en la fila " + (i + 1) + ": " + horaInicio + " - " + horaFin);
+      sheet.getRange(i + 1, 12).setValue("Sí");
+
+      if (notificado !== "Si") {
+        MailApp.sendEmail(direccionCorreo, "Reserva de sala confirmada", 
+          "Hola " + responsable + ",\n\nTu reserva para el " + fechaReservaFormateada + 
+          ", de " + horaInicio + " a " + horaFin + " en la " + salaReuniones + 
+          " ha sido confirmada.\n\nFoscal \nInspirados por la vida");
+        sheet.getRange(i + 1, 11).setValue("Si");
+      }
+
+      // Validar si ya está en el calendario
+      if (enCalendario !== "Sí") {
+        var timeZone = Session.getScriptTimeZone(); // Obtiene la zona horaria del script
+        var startTime = new Date(fechaReserva);
+        startTime.setHours(horaInicio.split(":")[0], horaInicio.split(":")[1]);
+
+        var endTime = new Date(fechaReserva);
+        endTime.setHours(horaFin.split(":")[0], horaFin.split(":")[1]);
+
+        try {
+          var event = calendar.createEvent(
+            "Reserva de sala: " + salaReuniones,
+            startTime,
+            endTime,
+            { guests: direccionCorreo, description: "Responsable: " + responsable, timeZone: timeZone }
+          );
+          Logger.log("Evento creado en Google Calendar: " + event.getId());
+          sheet.getRange(i + 1, 13).setValue("Sí"); // Marcar "Sí" en la columna M
+        } catch (error) {
+          Logger.log("ERROR al crear evento en Google Calendar: " + error.message);
+        }
+      }
+    } else {
+      Logger.log("Conflicto detectado en la fila " + (i + 1) + ": " + horaInicio + " - " + horaFin);
+      sheet.getRange(i + 1, 12).setValue("No");
+
+      if (notificado !== "Si") {
+        var mensaje = "Hola " + responsable + ",\n\nTu reserva no fue aprobada debido a que ya hay una reserva para esa fecha y hora." +
+                      "\n\nPara verificar la disponibilidad, por favor consulta el siguiente enlace:" +
+                      "\n" + calendarLink;
+        MailApp.sendEmail(direccionCorreo, "Conflicto de reserva", mensaje);
+        sheet.getRange(i + 1, 11).setValue("Si");
+      }
+    }
+  }
+  Logger.log("Fin de la función validarReservas");
+}
